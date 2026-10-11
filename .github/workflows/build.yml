@@ -1,0 +1,127 @@
+name: build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node 0.10.48
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/node"
+          curl -fsSL https://nodejs.org/dist/v0.10.48/node-v0.10.48-linux-x64.tar.gz \
+            | tar xz -C "$RUNNER_TEMP/node" --strip-components=1
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+
+      - name: Show Node and npm versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Bundled npm 2.15.1 is kept: npm cannot replace itself on Node < 4.
+          node -v
+          npm -v
+
+      - name: Pin npm registry to release date
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm config set registry "https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/"
+          npm config get registry
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+
+      - name: Build (default grunt task)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build under the upstream build timestamp so the @DATE header and the
+          # uglify banner year match the published 1.11.1 files.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq faketime
+          TZ=UTC faketime '2014-05-01 17:42:00' ./node_modules/.bin/grunt
+
+      - name: Generate dist/cdn release copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Mirrors makeReleaseCopies() in build/release.js (non-prerelease).
+          cat > "$RUNNER_TEMP/make-release-copies.js" <<'EOF'
+          var fs = require( "fs" ),
+            version = require( process.cwd() + "/package.json" ).version,
+            devFile = "dist/jquery.js",
+            minFile = "dist/jquery.min.js",
+            mapFile = "dist/jquery.min.map",
+            cdnFolder = "dist/cdn",
+            releaseFiles = {
+              "jquery-VER.js": devFile,
+              "jquery-VER.min.js": minFile,
+              "jquery-VER.min.map": mapFile,
+              "jquery.js": devFile,
+              "jquery.min.js": minFile,
+              "jquery.min.map": mapFile,
+              "jquery-latest.js": devFile,
+              "jquery-latest.min.js": minFile,
+              "jquery-latest.min.map": mapFile
+            };
+
+          if ( !fs.existsSync( "dist" ) ) {
+            fs.mkdirSync( "dist" );
+          }
+          if ( !fs.existsSync( cdnFolder ) ) {
+            fs.mkdirSync( cdnFolder );
+          }
+
+          Object.keys( releaseFiles ).forEach(function( key ) {
+            var text,
+              builtFile = releaseFiles[ key ],
+              unpathedFile = key.replace( /VER/g, version ),
+              releaseFile = cdnFolder + "/" + unpathedFile;
+
+            if ( /\.map$/.test( releaseFile ) ) {
+              text = fs.readFileSync( builtFile, "utf8" )
+                .replace( /"file":"([^"]+)","sources":\["([^"]+)"\]/,
+                  "\"file\":\"" + unpathedFile.replace( /\.min\.map/, ".min.js" ) +
+                  "\",\"sources\":[\"" + unpathedFile.replace( /\.min\.map/, ".js" ) + "\"]" );
+              fs.writeFileSync( releaseFile, text );
+            } else if ( /\.min\.js$/.test( releaseFile ) ) {
+              text = fs.readFileSync( builtFile, "utf8" )
+                .replace( /\/\/# sourceMappingURL=\S+/, "" );
+              fs.writeFileSync( releaseFile, text );
+            } else if ( builtFile !== releaseFile ) {
+              // shell.cp( "-f", builtFile, releaseFile ) equivalent: byte copy.
+              fs.writeFileSync( releaseFile, fs.readFileSync( builtFile ) );
+            }
+            console.log( "Created: " + releaseFile + " (from " + builtFile + ")" );
+          });
+          EOF
+          node "$RUNNER_TEMP/make-release-copies.js"
+          ls -la dist dist/cdn
+
+      - name: Pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          # The build workflow itself must not ship; upstream's .npmignore predates it.
+          rm -rf .github
+          npm pack
+          mv jquery-1.11.1.tgz "$RUNNER_TEMP/out/"
+          tar tzvf "$RUNNER_TEMP/out/jquery-1.11.1.tgz"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: jquery-1.11.1.tgz
+          path: ${{ runner.temp }}/out/jquery-1.11.1.tgz
+          if-no-files-found: error

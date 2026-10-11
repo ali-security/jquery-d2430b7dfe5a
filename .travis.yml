@@ -1,3 +1,18 @@
 language: node_js
 node_js:
 - '0.10'
+dist: focal
+addons:
+  chrome: stable
+env:
+  global:
+  - CHROME_BIN=google-chrome-stable
+script:
+- npm test
+- php --version
+- PHP_CLI_SERVER_WORKERS=16 php -d display_errors=stderr -S localhost:8000 -t "$TRAVIS_BUILD_DIR" > /tmp/php.log 2>&1 &
+- sleep 2
+- curl -sSf -o /dev/null http://localhost:8000/test/index.html
+- bash -c 'source ~/.nvm/nvm.sh && nvm install 22 && mkdir -p /tmp/qrunner && cd /tmp/qrunner && npm init -y >/dev/null && npm install puppeteer-core@24 && NODE_PATH=/tmp/qrunner/node_modules node "$TRAVIS_BUILD_DIR/test/runner/run-qunit-headless.js" http://localhost:8000/test/index.html'
+after_failure:
+- tail -n 200 /tmp/php.log

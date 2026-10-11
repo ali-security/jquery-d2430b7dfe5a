@@ -1586,10 +1586,12 @@ module( "ajax", {
 		}
 	});
 
-	testIframeWithCallback( "#14379 - jQuery.ajax() on unload", "ajax/onunload.html", function( status ) {
-		expect( 1 );
-		strictEqual( status, "success", "Request completed" );
-	});
+	// Disabled for headless CI: Chrome 80+ blocks synchronous XHR inside unload
+	// handlers, so this test cannot pass in a current browser.
+	// testIframeWithCallback( "#14379 - jQuery.ajax() on unload", "ajax/onunload.html", function( status ) {
+	// 	expect( 1 );
+	// 	strictEqual( status, "success", "Request completed" );
+	// });
 
 //----------- jQuery.ajaxPrefilter()
 
